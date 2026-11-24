@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>67drop</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #f5f5f7;
+      color: #1d1d1f;
+      line-height: 1.5;
+      padding: 16px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 1.8rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+    .subtitle {
+      text-align: center;
+      color: #86868b;
+      margin-bottom: 24px;
+      font-size: 0.95rem;
+    }
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    .card h2 {
+      font-size: 1.1rem;
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+    button, .btn {
+      display: inline-block;
+      background: #0071e3;
+      color: white;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 8px;
+    }
+    button:active { background: #005bb5; }
+    button.secondary {
+      background: #e8e8ed;
+      color: #1d1d1f;
+    }
+    input[type="text"], select {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid #d2d2d7;
+      border-radius: 12px;
+      font-size: 1rem;
+      margin-bottom: 8px;
+    }
+    .device-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .device-item:last-child { border-bottom: none; }
+    .online-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 8px;
+    }
+    .online { background: #34c759; }
+    .offline { background: #d2d2d7; }
+    .file-item {
+      padding: 14px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .file-item:last-child { border-bottom: none; }
+    .file-name { font-weight: 500; margin-bottom: 4px; }
+    .file-meta { font-size: 0.85rem; color: #86868b; }
+    .actions { margin-top: 8px; display: flex; gap: 8px; }
+    .actions button { width: auto; padding: 8px 14px; font-size: 0.9rem; }
+    #setupScreen, #mainScreen { display: none; }
+    .status {
+      text-align: center;
+      padding: 8px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      font-size: 0.9rem;
+    }
+    .status.success { background: #e8f9ee; color: #1a7f37; }
+    .status.info { background: #e8f0fe; color: #1a56db; }
+  </style>
+</head>
+<body>
+  <h1>67droP</h1>
+  <p class="subtitle">跨設備檔案傳輸</p>
+
+  <!-- 第一次設定畫面 -->
+  <div id="setupScreen" class="card">
+    <h2>幫這個裝置取個名字</h2>
+    <p style="color:#86868b; margin-bottom:12px; font-size:0.9rem;">例如：家裡電腦、科技中心、我的手機…</p>
+    <input type="text" id="deviceNameInput" placeholder="輸入裝置名稱" maxlength="20">
+    <button onclick="saveDeviceName()">開始使用</button>
+  </div>
+
+  <!-- 主畫面 -->
+  <div id="mainScreen">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div style="font-size:0.85rem; color:#86868b;">目前裝置</div>
+          <div id="currentDeviceName" style="font-weight:600;"></div>
+        </div>
+        <button class="secondary" style="width:auto; padding:8px 12px;" onclick="changeDeviceName()">更改</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>傳送檔案</h2>
+      <select id="targetDevice"></select>
+      <input type="file" id="fileInput" style="margin:12px 0;">
+      <button onclick="uploadFile()">傳送</button>
+      <div id="uploadStatus"></div>
+    </div>
+
+    <div class="card">
+      <h2>我的收件夾</h2>
+      <div id="inboxList">載入中...</div>
+    </div>
+
+    <div class="card">
+      <h2>所有設備</h2>
+      <div id="deviceList">載入中...</div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    let deviceId = localStorage.getItem('67drop_device_id');
+    let deviceName = localStorage.getItem('67drop_device_name');
+
+    // 初始化
+    if (!deviceId) {
+      deviceId = crypto.randomUUID();
+      localStorage.setItem('67drop_device_id', deviceId);
+    }
+
+    if (!deviceName) {
+      document.getElementById('setupScreen').style.display = 'block';
+    } else {
+      showMainScreen();
+    }
+
+    function saveDeviceName() {
+      const name = document.getElementById('deviceNameInput').value.trim();
+      if (!name) return alert('請輸入名稱');
+      deviceName = name;
+      localStorage.setItem('67drop_device_name', name);
+      registerDevice();
+      showMainScreen();
+    }
+
+    function changeDeviceName() {
+      const name = prompt('輸入新的裝置名稱', deviceName);
+      if (name && name.trim()) {
+        deviceName = name.trim();
+        localStorage.setItem('67drop_device_name', deviceName);
+        registerDevice();
+        document.getElementById('currentDeviceName').textContent = deviceName;
+        loadDevices();
+      }
+    }
+
+    function showMainScreen() {
+      document.getElementById('setupScreen').style.display = 'none';
+      document.getElementById('mainScreen').style.display = 'block';
+      document.getElementById('currentDeviceName').textContent = deviceName;
+      registerDevice();
+      loadDevices();
+      loadInbox();
+    }
+
+    function registerDevice() {
+      fetch('/api/device', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: deviceId, name: deviceName })
+      });
+      socket.emit('register', deviceId);
+    }
+
+    async function loadDevices() {
+      const res = await fetch('/api/devices');
+      const devices = await res.json();
+      
+      // 更新設備列表
+      const list = document.getElementById('deviceList');
+      list.innerHTML = devices.map(d => `
+        <div class="device-item">
+          <div>
+            <span class="online-dot ${d.online ? 'online' : 'offline'}"></span>
+            ${d.name} ${d.id === deviceId ? '(目前)' : ''}
+          </div>
+          <div style="font-size:0.8rem; color:#86868b;">
+            ${d.online ? '在線' : '離線'}
+          </div>
+        </div>
+      `).join('') || '<div style="color:#86868b;">尚無設備</div>';
+
+      // 更新傳送目標選單
+      const select = document.getElementById('targetDevice');
+      select.innerHTML = devices
+        .filter(d => d.id !== deviceId)
+        .map(d => `<option value="${d.id}">${d.name} ${d.online ? '(在線)' : '(離線)'}</option>`)
+        .join('') || '<option value="">沒有其他設備</option>';
+    }
+
+    async function loadInbox() {
+      const res = await fetch(`/api/inbox/${deviceId}`);
+      const files = await res.json();
+      const list = document.getElementById('inboxList');
+
+      if (files.length === 0) {
+        list.innerHTML = '<div style="color:#86868b;">沒人發給你=(</div>';
+        return;
+      }
+
+      list.innerHTML = files.map(f => `
+        <div class="file-item">
+          <div class="file-name">${f.original_name}</div>
+          <div class="file-meta">
+            來自 ${f.from_name} · ${(f.size / 1024 / 1024).toFixed(2)} MB · ${new Date(f.created_at).toLocaleString()}
+          </div>
+          <div class="actions">
+            <button onclick="downloadFile('${f.id}', '${f.original_name}')">下載</button>
+            <button class="secondary" onclick="deleteFile('${f.id}')">刪除</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function uploadFile() {
+      const fileInput = document.getElementById('fileInput');
+      const targetId = document.getElementById('targetDevice').value;
+      const status = document.getElementById('uploadStatus');
+
+      if (!fileInput.files[0]) return alert('請選擇檔案');
+      if (!targetId) return alert('請選擇要傳給誰');
+
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      formData.append('fromDeviceId', deviceId);
+      formData.append('toDeviceId', targetId);
+
+      status.innerHTML = '<div class="status info">傳送中...</div>';
+
+      try {
+        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        const data = await res.json();
+        status.innerHTML = `<div class="status success">${data.message}</div>`;
+        fileInput.value = '';
+        setTimeout(() => status.innerHTML = '', 3000);
+      } catch (err) {
+        status.innerHTML = '<div class="status" style="background:#fde8e8;color:#c81e1e;">傳送失敗</div>';
+      }
+    }
+
+    function downloadFile(id, name) {
+      window.location.href = `/api/download/${id}`;
+    }
+
+    async function deleteFile(id) {
+      if (!confirm('確定要刪除這個檔案嗎？')) return;
+      await fetch(`/api/file/${id}`, { method: 'DELETE' });
+      loadInbox();
+    }
+
+    // 即時事件
+    socket.on('new-file', (data) => {
+      alert(`收到新檔案：${data.originalName}`);
+      loadInbox();
+    });
+
+    socket.on('devices-updated', () => {
+      loadDevices();
+    });
+
+    // 定期重新整理
+    setInterval(() => {
+      loadDevices();
+      loadInbox();
+    }, 15000);
+  </script>
+</body>
+</html>
